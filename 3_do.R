@@ -3,10 +3,10 @@ library(tidyverse)
 library(tidylog)
 
 # find second largest
-max2 <- function(x) max(x[x != max(x, na.rm = T)])
+# max2 <- function(x) max(x[x != max(x, na.rm = T)])
 
-county <- "01073"
 
+# Birmingham peers
 peers <- c(
   "01073", "18097", "22033",
   "22071", "21111", "47037",
@@ -14,25 +14,35 @@ peers <- c(
   "39035", "47157", "51710",
   "51760", "55079", "01089"
 )
+area <- "stco"
+name <- "Birmingham"
 
+# Denver peers
+peers <- c("12420", "33460", "38060", "38900", "41740", "41620", "42660", "19740")
+area <- "cbsa"
+name <- "Denver"
 
 # acs =========
-load("../../metro-dataset/acs5_2018/co_acs_raw.rda")
 
-acs_summary <- co_acs_raw %>%
-  filter(stco_code %in% peers) %>%
-  select(stco_code,
+a <- ifelse(area == "cbsa", "cbsa", "co")
+acs_path <- paste0("../../metro-dataset/acs5_2018/",a,"_acs_raw.csv")
+acs_raw <- read_csv(acs_path)
+
+acs_summary <- acs_raw %>%
+  filter_(paste0(area, "_code", "%in% peers")) %>%
+  select(contains("code"),
     baplus_white = S1501_C01_033E, baplus_black = S1501_C01_036E,
     baplus_asian = S1501_C01_042E, baplus_latino = S1501_C01_054E,
 
     hsplus_white = S1501_C01_032E, hsplus_black = S1501_C01_035E,
     hsplus_asian = S1501_C01_041E, hsplus_latino = S1501_C01_053E
-  )
+  ) %>%
+  mutate_at(vars(contains("code")), ~str_pad(., 5, "left","0"))
 
 # sbo ==========
 source("../../metro-dataset/census/SBO.R")
 
-SBO_merged <- get_sbo_m(peers) %>%
+SBO_merged <- get_sbo_m(peers, area) %>%
   ungroup() %>%
   unique() %>%
   mutate(label = ifelse(label == "All firms classifiable by gender, ethnicity, race, and veteran status", "All_classified", label)) %>%
@@ -42,7 +52,6 @@ SBO_summary <- SBO_merged %>%
   select(-firmall) %>%
   pivot_wider(names_from = c("label", "is.traded"), values_from = "firmdemp") %>%
   mutate(
-    stco_code = paste0(state, county),
     tot_firms = All_classified_traded + All_classified_local,
     pct_traded = All_classified_traded / tot_firms,
 
@@ -61,9 +70,8 @@ SBO_summary <- SBO_merged %>%
   ) %>%
   # mutate_at(vars(contains("pct")), .funs = list(gap = ~max(.)-.)) %>%
   rename_if(is.numeric, paste0, "_SBO") %>%
-  select(stco_code, tot_firms_SBO, gap_traded_SBO, contains("pct"), everything())
+  select(contains("code"), tot_firms_SBO, gap_traded_SBO, contains("pct"), everything())
 
-SBO_summary$gap_traded_avg_SBO
 
 # county ======
 
@@ -71,8 +79,8 @@ load("data/SSTR_merged.rda")
 
 SSTR_summary <- SSTR_merged %>%
   filter(year >= 2014) %>%
-  filter(stco_code %in% peers) %>%
-  group_by(stco_code) %>%
+  filter_(paste0(area, "_code", "%in% peers")) %>%
+  group_by_(paste0(area,"_code"), paste0(area,"_name")) %>%
   summarise_at(vars(contains("amt_")), ~ mean(.)) %>%
   mutate(
     pct_female = amt_female / amt_tot,
@@ -85,15 +93,14 @@ load("data/EXIM_merged.rda")
 EXIM_summary <- EXIM_merged %>%
   filter(year >= 2014) %>%
   filter(!is.na(stco_code)) %>%
-  group_by(stco_code, stco_name, co_emp) %>%
+  group_by_(paste0(area,"_code"), paste0(area,"_name")) %>%
   summarise_at(vars(contains("amt_")), mean) %>%
   mutate(
-    amt_per_emp = amt_tot / co_emp,
     pct_small = amt_small / amt_tot,
     pct_woman = amt_woman / amt_tot,
     pct_minority = amt_minority / amt_tot
   ) %>%
-  filter(stco_code %in% peers) %>%
+  filter_(paste0(area, "_code", "%in% peers")) %>%
   rename_at(vars(contains("amt_"), contains("pct_")), paste0, "_EXIM")
 
 # tract =======
@@ -103,19 +110,21 @@ master <- wac_FDIC_CDFI %>%
   filter(year >= 2014) %>%
   filter(!is.na(emp_tot_17)) %>%
   mutate(stco_code = substr(stcotr_code, 1, 5)) %>%
-  filter(stco_code %in% peers) %>%
   mutate(amt_tot_CDFI = ifelse(is.na(amt_tot_CDFI), 0, amt_tot_CDFI)) %>%
-  left_join(metro.data::county_cbsa_st[c("stco_code", "stco_name", "cbsa_code", "cbsa_name")], by = "stco_code")
+  left_join(metro.data::county_cbsa_st[c("stco_code", "stco_name", "cbsa_code", "cbsa_name")], by = "stco_code") %>%
+  filter_(paste0(area, "_code", "%in% peers"))
 
 # tract summary ======
 
-demo_sum <- function(df, col, name) {
+demo_sum <- function(df, col, name, area) {
   col <- rlang::enquo(col)
-
+  c <- paste0(area, "_code")
+  n <- paste0(area, "_name")
+  
   tmp <- df %>%
     mutate(amt_per_emp = !!col / emp_tot_17) %>%
-    group_by(stco_code, stco_name)
-  
+    group_by_(c, n)
+    
   demo <- tmp  %>%
 
     # get 1) per capita loan, weighted by minority employment; 2) total
@@ -130,8 +139,7 @@ demo_sum <- function(df, col, name) {
     mutate(
       gap_amt_emp = (max(amt_per_tot) - amt_per_tot) * emp_tot_17_sum,
       gap_amt_emp_avg = (weighted.mean(amt_per_tot, emp_tot_17_sum) - amt_per_tot) * emp_tot_17_sum
-    ) %>%
-    rename_if(is.numeric, paste0, name)
+    ) 
   
   oz <- tmp %>%
     group_by(is.na(stco_type), add = T) %>%
@@ -141,23 +149,26 @@ demo_sum <- function(df, col, name) {
     ) %>%
     pivot_wider(names_from = "is.na(stco_type)", values_from = c("amt_tot", "amt_per_emp")) %>%
     mutate(pct_amt_oz = amt_tot_FALSE / (amt_tot_TRUE + amt_tot_FALSE)) %>%
-    select(stco_code, pct_amt_oz,
+    select(pct_amt_oz,
            amt_per_oz = amt_per_emp_FALSE,
            amt_per_noz = amt_per_emp_TRUE
     )
   
-  bind_cols(demo, oz)
+  bind_cols(demo, oz) %>%
+    rename_if(is.numeric, paste0, name)
     
 }
 
 FDIC_summary <- master %>%
-  demo_sum(amt_tot, "_FDIC")
+  demo_sum(amt_tot, "_FDIC", area)
 
 CDFI_summary <- master %>%
-  demo_sum(amt_tot_CDFI, "_CDFI")
+  demo_sum(amt_tot_CDFI, "_CDFI", area)
 
-gg_summary <- master %>%
-  group_by(stco_code, stco_name) %>%
+# Visualize ================================
+
+gg <- master %>%
+  group_by_(paste0(area,"_code"), paste0(area,"_name")) %>%
   summarise_at(vars(contains("amt_"), emp_tot_17), sum, na.rm = T) %>%
   ungroup() %>%
   mutate_at(vars(contains("amt_")), ~(./emp_tot_17))%>%
@@ -172,9 +183,9 @@ gg_summary <- master %>%
 library(RColorBrewer)
 mycolor <- colorRampPalette(brewer.pal(12, "Set1"))(19)
 
-g <- ggplot(gg_summary %>% 
+g <- ggplot(gg %>% 
          filter(category %in% c("CDFI","FDIC", "all")), 
-         aes(x = stco_name, y = amt_per_emp, fill = program, label = scales::comma(amt_per_emp))) + 
+         aes_string(x = paste0(area,"_name"), y = "amt_per_emp", fill = "program")) + 
   geom_col() + 
   scale_fill_manual(values = mycolor)+
   coord_flip() + 
@@ -185,25 +196,19 @@ g
 
 plotly::ggplotly(g)
 
-# --- oz
-oz_summarize <- function(df) {
- 
-}
-
-
 
 # SAVE OUTPUT ---------------------------------------------------
 
 # merge summaries ----
 
 all <- acs_summary %>%
-  left_join(SBO_summary, by = "stco_code") %>%
-  left_join(FDIC_summary, by = "stco_code") %>%
-  left_join(CDFI_summary, by = c("stco_code", "stco_name")) %>%
-  left_join(EXIM_summary, by = c("stco_code", "stco_name")) %>%
-  left_join(SSTR_summary, by = "stco_code") %>%
+  left_join(SBO_summary, by = paste0(area,"_code")) %>%
+  left_join(FDIC_summary, by = paste0(area,"_code")) %>%
+  left_join(CDFI_summary, by = c(paste0(area,"_code"), paste0(area,"_name"))) %>%
+  left_join(EXIM_summary, by = c(paste0(area,"_code"), paste0(area,"_name"))) %>%
+  left_join(SSTR_summary, by = paste0(area,"_code")) %>%
   # left_join(metro.data::county_cbsa_st[c("stco_code", "co_emp")]) %>%
-  select(stco_code, stco_name, emp_tot = emp_tot_FDIC, everything())
+  rename(emp_tot = emp_tot_17_sum_FDIC)
 
 peergap_summary <- all %>%
   mutate(
@@ -216,11 +221,11 @@ peergap_summary <- all %>%
     gap_amt_traded_EXIM_avg = (weighted.mean(EXIM_per_traded, All_classified_traded_SBO, na.rm = T) - EXIM_per_traded) * All_classified_traded_SBO,
 
     SSTR_per_traded = amt_tot_SSTR / All_classified_traded_SBO,
-    # Huntsville is an outlier
-    gap_amt_traded_SSTR = (max2(SSTR_per_traded) - SSTR_per_traded) * All_classified_traded_SBO,
+    
+    gap_amt_traded_SSTR = (max(SSTR_per_traded) - SSTR_per_traded) * All_classified_traded_SBO,
     gap_amt_traded_SSTR_ave = (weighted.mean(SSTR_per_traded, All_classified_traded_SBO, na.rm = T) - SSTR_per_traded) * All_classified_traded_SBO
   ) %>%
-  select(stco_code, stco_name, emp_tot, contains("gap"),
+  select(contains("code"), contains("name"), emp_tot, contains("gap"),
     tot_firms_SBO,
     tot_traded = All_classified_traded_SBO, contains("amt_tot")
   )
@@ -233,8 +238,8 @@ demogap_summary <- all %>%
     rate_baplus_traded_black = `Black or African American_traded_SBO` / baplus_black,
     rate_baplus_traded_white = White_traded_SBO / baplus_white
   ) %>%
-  transmute(
-    stco_code = stco_code, stco_name = stco_name,
+  mutate(
+    
     gap_hsplus_all_white_black = (rate_hsplus_all_white - rate_hsplus_all_black) * hsplus_black,
 
     # tradable
@@ -255,11 +260,12 @@ demogap_summary <- all %>%
     # finance, oz
     gap_FDIC_oz = amt_per_noz_FDIC - amt_per_oz_FDIC,
     gap_CDFI_oz = amt_per_noz_CDFI - amt_per_oz_CDFI
-  )
+  ) %>%
+  select(contains("code"), contains("name"), contains("gap"))
 
 dfs <- objects()
 
 loans <- mget(dfs[grep("_summary", dfs)])
 names(loans)
 
-openxlsx::write.xlsx(loans, file = paste0("result/", county, "_loan.xlsx"))
+openxlsx::write.xlsx(loans, file = paste0("result/", name, "_loan.xlsx"))

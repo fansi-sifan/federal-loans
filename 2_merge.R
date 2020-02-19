@@ -83,7 +83,7 @@ EXIM_merged <- EXIM_cleaned %>%
   mutate(stco_code = str_pad(county14, 5,"left","0")) %>%
   group_by(stco_code, year) %>%
   summarise_at(vars(contains("amt_")), sum) %>%
-  left_join(metro.data::county_cbsa_st[c("stco_code", "stco_name", "co_emp")]) 
+  left_join(metro.data::county_cbsa_st[c("stco_code", "stco_name", "co_emp", "cbsa_code", "cbsa_name")]) 
 
 save(EXIM_merged, file = "data/EXIM_merged.rda")
 
@@ -92,7 +92,8 @@ SSTR_merged <- SSTR_cleaned %>%
   group_by(stco_code, year) %>%
   summarise(amt_female = sum(amt_tot  *gender), 
             amt_minority = sum(amt_tot * disadv),
-            amt_tot = sum(amt_tot)) 
+            amt_tot = sum(amt_tot)) %>%
+  left_join(metro.data::county_cbsa_st[c("stco_code", "stco_name", "cbsa_code", "cbsa_name")]) 
 
 save(SSTR_merged, file = "data/SSTR_merged.rda")
   
