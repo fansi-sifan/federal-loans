@@ -1,4 +1,5 @@
 library(tidyverse)
+library(tidylog)
 
 # LOAD =====================
 load("data/CDFI.rda")
@@ -13,9 +14,9 @@ load("../../Birmingham/County Cluster/SSTR_cleaned.rda")
 
 CDFI_cleaned <- CDFI %>%
   # only includes investees that are businesses, excludes individuals and CDFIs
-  filter(investeetype == "BUS") %>%
+  # filter(investeetype == "BUS") %>%
   # only includes business related purpose (BUSFIXED, BUSINESS, BUSWORKCAP, MICRO, RECOCOM, RERHCOM)
-  filter(purpose %in% c("BUSFIXED", "BUSINESS", "BUSWORKCAP", "MICRO", "RECOCOM", "RERHCOM")) %>%
+  # filter(purpose %in% c("BUSFIXED", "BUSINESS", "BUSWORKCAP", "MICRO", "RECOCOM", "RERHCOM")) %>%
   mutate(is.woman = case_when(
     gender %in% c("FEMALE", "BOTH") | womenownedorcontrolled == "YES" ~ TRUE,
     gender == "MALE" | womenownedorcontrolled == "NO" ~ FALSE,
