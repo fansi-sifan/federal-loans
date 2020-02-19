@@ -5,13 +5,16 @@ library(tidylog)
 load("data/loan_cleaned.rda")
 list2env(datafiles, .GlobalEnv)
 
+# opportunity zones
+load("../../metro.data/data/stcotr_oz.rda")
+
 # LEHD, tract level employment, for FDIC & CDFI --------
-path <- "../../../LEHD LODES/LEHD LODES v7.3/WAC_JT02/20"
+lehd_path <- "../../../LEHD LODES/LEHD LODES v7.3/WAC_JT02/20"
 
 clean_lehd <- function(yr){
 #'  @param yr character, choose between "04" to "17"
   
-  read_csv(paste0(path, yr, "_ALL_wac_JT02.csv")) %>%
+  read_csv(paste0(lehd_path, yr, "_ALL_wac_JT02.csv")) %>%
     mutate(stcotr_code = str_sub(str_pad(w_geocode, 15, "left", "0"),1,11))%>%
     group_by(stcotr_code) %>%
     summarise_if(is.numeric, sum) %>%
@@ -23,7 +26,8 @@ clean_lehd <- function(yr){
            emp_other = CR03 + CR05 + CR07, 
            emp_asian = CR04, 
            emp_latino = CT02, 
-           emp_female = CS02) %>%
+           emp_female = CS02, 
+           emp_male = CS01) %>%
     select(stcotr_code, contains("emp")) %>%
     rename_at(vars(-one_of("stcotr_code")), ~ paste0(.,"_",yr))
 }
@@ -47,15 +51,27 @@ FDIC_tomerge <- FDIC_cleaned %>%
 CDFI_tomerge <- CDFI_cleaned %>%
   # better matches beyond 2014
   # filter(year >= 2014) %>%
-  group_by(year, stcotr_code) %>%
-  summarise(amt_tot_CDFI = sum(amt_tot, na.rm = T), 
-            n_tot_CDFI = n())
+  group_by(year, stcotr_code, purpose) %>%
+  summarise(amt_tot_CDFI = sum(amt_tot, na.rm = T)) %>%
+  pivot_wider(names_from = "purpose", values_from = "amt_tot_CDFI", names_prefix = "amt_") %>%
+  ungroup() %>%
+  # mutate row sum
+  mutate(amt_tot_CDFI = rowSums(select(., contains("amt_")), na.rm = T))
 
 wac_FDIC_CDFI <- wac_emp %>%
-  left_join(full_join(FDIC_tomerge, CDFI_tomerge, by = c("year", "stcotr_code")), "stcotr_code")
+  left_join(full_join(FDIC_tomerge, CDFI_tomerge, by = c("year", "stcotr_code")), "stcotr_code") %>%
+  left_join(stcotr_oz, by = "stcotr_code")
 
 save(wac_FDIC_CDFI, file = "data/wac_FDIC_CDFI.rda")
 
+# tmp <- wac_FDIC_CDFI %>%
+#   select(contains("emp_"))%>%
+#   select(contains("_17")) %>%
+#   mutate(pct_nonwhite = (emp_tot_17 - emp_white_17)/emp_tot_17,
+#          pct_female = emp_female_17/emp_tot_17, 
+#          pct_poor = emp_below40k_17/emp_tot_17) 
+# 
+# skimr::skim(tmp)
 
 # county level --------
 
@@ -65,7 +81,18 @@ EXIM_merged <- EXIM_cleaned %>%
   rename(Unique.Identifier = unique_identifier) %>%
   left_join(EXIM_matched[c("Unique.Identifier", "county14")], by = "Unique.Identifier") %>%
   mutate(stco_code = str_pad(county14, 5,"left","0")) %>%
-  left_join(metro.data::county_cbsa_st[c("stco_code", "stco_name", "co_emp")])
+  group_by(stco_code, year) %>%
+  summarise_at(vars(contains("amt_")), sum) %>%
+  left_join(metro.data::county_cbsa_st[c("stco_code", "stco_name", "co_emp")]) 
 
 save(EXIM_merged, file = "data/EXIM_merged.rda")
 
+SSTR_merged <- SSTR_cleaned %>%
+  ungroup() %>%
+  group_by(stco_code, year) %>%
+  summarise(amt_female = sum(amt_tot  *gender), 
+            amt_minority = sum(amt_tot * disadv),
+            amt_tot = sum(amt_tot)) 
+
+save(SSTR_merged, file = "data/SSTR_merged.rda")
+  
