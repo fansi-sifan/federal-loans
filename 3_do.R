@@ -15,12 +15,21 @@ peers <- c(
   "51760", "55079", "01089"
 )
 area <- "stco"
-name <- "Birmingham"
+
+name <- "Metro Denver"
+peers <- (metro.data::county_cbsa_st %>% filter(stco_code %in% peers) %>% unique())[["cbsa_code"]]
+
+target_cbsa <- c("22660", "19740", "14500", "24540")
+target_co <- (metro.data::county_cbsa_st %>%
+                filter(cbsa_code %in% target_cbsa) %>%
+                filter(!stco_code %in% c("08039", "08093", "08019", "08047")))$stco_code
+
 
 # Denver peers
-peers <- c("12420", "33460", "38060", "38900", "41740", "41620", "42660", "19740")
+peers <- c("12420", "33460", "38060", "38900", "41740", "41620", "42660")
+
 area <- "cbsa"
-name <- "Denver"
+name <- "Metro Denver"
 
 # acs =========
 
@@ -42,36 +51,75 @@ acs_summary <- acs_raw %>%
 # sbo ==========
 source("../../metro-dataset/census/SBO.R")
 
-SBO_merged <- get_sbo_m(peers, area) %>%
-  ungroup() %>%
-  unique() %>%
-  mutate(label = ifelse(label == "All firms classifiable by gender, ethnicity, race, and veteran status", "All_classified", label)) %>%
-  filter(label != "Publicly held and other firms not classifiable by gender, ethnicity, race, and veteran status")
+clean_SBO <- function(df){
+  df %>% ungroup() %>%
+    unique() %>%
+    mutate(label = ifelse(label == "All firms classifiable by gender, ethnicity, race, and veteran status", "All_classified", label)) %>%
+    filter(label != "Publicly held and other firms not classifiable by gender, ethnicity, race, and veteran status")%>%
+    select(-firmall) %>%
+    pivot_wider(names_from = c("label", "is.traded"), values_from = "firmdemp")
+    
+}
+
+do_SBO <- function(df){
+  df  %>%
+     mutate(
+      tot_firms = All_classified_traded + All_classified_local,
+      pct_traded = All_classified_traded / tot_firms,
+      
+      pct_female_traded = `Female-owned_traded`/ All_classified_traded,
+      pct_female_all = (`Female-owned_traded` = `Female-owned_local`) / tot_firms,
+      
+      pct_black_traded = `Black or African American_traded` / All_classified_traded,
+      pct_black_all = (`Black or African American_traded` + `Black or African American_local`) / tot_firms,
+      
+      pct_white_traded = White_traded / All_classified_traded,
+      pct_white_all = (White_traded + White_local) / tot_firms,
+      
+      pct_hispanic_traded = Hispanic_traded / All_classified_traded,
+      pct_hispanic_all = (Hispanic_traded + Hispanic_local) / tot_firms,
+      
+      pct_minority_traded = Minority_traded / All_classified_traded,
+      pct_minority_all = (Minority_traded + Minority_local) / tot_firms,
+      
+      pct_nonminority_traded = Nonminority_traded / All_classified_traded,
+      pct_nonminority_all = (Nonminority_traded + Nonminority_local) / tot_firms
+    ) %>%
+    
+    # calculate gap between best peer and peer average
+    mutate(
+      gap_female_peer = (max(pct_female_all) - pct_female_all) * tot_firms,
+      gap_female_self = (0.491 - pct_female_all) * tot_firms, 
+      gap_female_self_traded = (0.491 - pct_female_traded) * tot_firms * pct_traded,
+      
+      gap_hispanic_black = (max(pct_hispanic_all + pct_black_all) - pct_black_all - pct_hispanic_all) * tot_firms,
+      gap_hispanic_black_self = (0.255 - pct_hispanic_all + pct_black_all) * tot_firms, 
+      gap_hispanic_black_self_traded = (0.255 - pct_hispanic_all - pct_black_all) * tot_firms * pct_traded,
+      
+      gap_traded = (max(pct_traded) - pct_traded) * tot_firms * pct_traded,
+      gap_traded_avg = (weighted.mean(pct_traded, tot_firms) - pct_traded) * tot_firms
+    ) 
+}
+
+# SBO_summary <- get_sbo_m(c(peers, target_cbsa), area) %>%
+#   clean_SBO() %>%
+#   do_SBO()
+
+SBO_merged <- bind_rows(
+  get_sbo_m(target_co, "stco") %>%
+    clean_SBO() %>%
+    summarise_if(is.numeric, sum, na.rm = T) %>%
+    mutate(cbsa_code = "99999",
+           GEO_TTL = name),
+  get_sbo_m(peers, area) %>%
+    clean_SBO()
+)
 
 SBO_summary <- SBO_merged %>%
-  select(-firmall) %>%
-  pivot_wider(names_from = c("label", "is.traded"), values_from = "firmdemp") %>%
-  mutate(
-    tot_firms = All_classified_traded + All_classified_local,
-    pct_traded = All_classified_traded / tot_firms,
+  do_SBO() %>%
+  select(cbsa_code, GEO_TTL, contains("gap"), contains("traded"),everything())
 
-    pct_black_traded = `Black or African American_traded` / All_classified_traded,
-    pct_black_all = (`Black or African American_traded` + `Black or African American_local`) / tot_firms,
-
-    pct_white_traded = White_traded / All_classified_traded,
-    pct_white_all = (White_traded + White_local) / tot_firms,
-
-    pct_minority_traded = Minority_traded / All_classified_traded,
-    pct_minority_all = (Minority_traded + Minority_local) / tot_firms
-  ) %>%
-  mutate(
-    gap_traded = (max(pct_traded) - pct_traded) * tot_firms * pct_traded,
-    gap_traded_avg = (weighted.mean(pct_traded, tot_firms) - pct_traded) * tot_firms
-  ) %>%
-  # mutate_at(vars(contains("pct")), .funs = list(gap = ~max(.)-.)) %>%
-  rename_if(is.numeric, paste0, "_SBO") %>%
-  select(contains("code"), tot_firms_SBO, gap_traded_SBO, contains("pct"), everything())
-
+write.csv(SBO_summary, paste0(name, "_SBO.csv"))
 
 # county ======
 
@@ -82,29 +130,36 @@ SSTR_summary <- SSTR_merged %>%
   filter_(paste0(area, "_code", "%in% peers")) %>%
   group_by_(paste0(area,"_code"), paste0(area,"_name")) %>%
   summarise_at(vars(contains("amt_")), ~ mean(.)) %>%
-  mutate(
+  rename_at(vars(contains("amt_")), paste0, "_SSTR")
+
+SSTR <- function(df){
+  df %>% mutate(
     pct_female = amt_female / amt_tot,
     pct_minority = amt_minority / amt_tot
-  ) %>%
-  rename_at(vars(contains("amt_")), paste0, "_SSTR")
+  ) 
+}
 
 load("data/EXIM_merged.rda")
 
 EXIM_summary <- EXIM_merged %>%
   filter(year >= 2014) %>%
   filter(!is.na(stco_code)) %>%
+  filter_(paste0(area, "_code", "%in% peers")) %>%
   group_by_(paste0(area,"_code"), paste0(area,"_name")) %>%
   summarise_at(vars(contains("amt_")), mean) %>%
-  mutate(
+  rename_at(vars(contains("amt_"), contains("pct_")), paste0, "_EXIM")
+
+EXIM <- function(df){
+  df %>% mutate(
     pct_small = amt_small / amt_tot,
     pct_woman = amt_woman / amt_tot,
     pct_minority = amt_minority / amt_tot
-  ) %>%
-  filter_(paste0(area, "_code", "%in% peers")) %>%
-  rename_at(vars(contains("amt_"), contains("pct_")), paste0, "_EXIM")
-
+  ) 
+}
 # tract =======
 load("data/wac_FDIC_CDFI.rda")
+
+library(tidyverse)
 
 master <- wac_FDIC_CDFI %>%
   filter(year >= 2014) %>%
@@ -194,7 +249,7 @@ g <- ggplot(gg %>%
 
 g
 
-plotly::ggplotly(g)
+# plotly::ggplotly(g)
 
 
 # SAVE OUTPUT ---------------------------------------------------
