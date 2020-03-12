@@ -31,6 +31,12 @@ peers <- c("12420", "33460", "38060", "38900", "41740", "41620", "42660")
 area <- "cbsa"
 name <- "Metro Denver"
 
+# Grand Rapids peers
+name <- "Grand Rapids"
+target_cbsa <- "24340"
+peers <- c("14260","17140","17460","24860","26900","33340","33460","34980","41620","46140","48620")
+target_co = ""
+peer_co = ""
 # acs =========
 
 a <- ifelse(area == "cbsa", "cbsa", "co")
@@ -61,6 +67,9 @@ clean_SBO <- function(df){
     
 }
 
+load("../../metro-self-sufficient/demo_worker.rds")
+load("../../metro-self-sufficient/demo_ba_worker.rds")
+
 do_SBO <- function(df){
   df  %>%
      mutate(
@@ -88,36 +97,46 @@ do_SBO <- function(df){
     
     # calculate gap between best peer and peer average
     mutate(
-      gap_female_peer = (max(pct_female_all) - pct_female_all) * tot_firms,
-      gap_female_self = (0.491 - pct_female_all) * tot_firms, 
-      gap_female_self_traded = (0.491 - pct_female_traded) * tot_firms * pct_traded,
+      share_female = pct_female_all/female,
+      gap_female_peer = (max(share_female) * female - pct_female_all) * tot_firms,
+      gap_female_peer_traded = gap_female_peer * pct_traded,
+      gap_female_self = (female - pct_female_all) * tot_firms, 
+      gap_female_self_traded = gap_female_self * pct_traded,
       
-      gap_hispanic_black = (max(pct_hispanic_all + pct_black_all) - pct_black_all - pct_hispanic_all) * tot_firms,
-      gap_hispanic_black_self = (0.255 - pct_hispanic_all + pct_black_all) * tot_firms, 
-      gap_hispanic_black_self_traded = (0.255 - pct_hispanic_all - pct_black_all) * tot_firms * pct_traded,
+      share_hispanic_black = (pct_hispanic_all + pct_black_all)/`Black or Hispanic`,
+      gap_hispanic_black_peer = (max(share_hispanic_black) * `Black or Hispanic` - pct_hispanic_all - pct_black_all) * tot_firms,
+      gap_hispanic_black_peer_traded = gap_hispanic_black_peer * pct_traded,
+      
+      gap_hispanic_black_self = (`Black or Hispanic` - pct_hispanic_all - pct_black_all) * tot_firms, 
+      gap_hispanic_black_self_traded = gap_hispanic_black_self * pct_traded,
       
       gap_traded = (max(pct_traded) - pct_traded) * tot_firms * pct_traded,
       gap_traded_avg = (weighted.mean(pct_traded, tot_firms) - pct_traded) * tot_firms
     ) 
 }
 
-# SBO_summary <- get_sbo_m(c(peers, target_cbsa), area) %>%
-#   clean_SBO() %>%
-#   do_SBO()
+SBO_merged <- get_sbo_m(c(peers, target_cbsa), area) 
 
-SBO_merged <- bind_rows(
-  get_sbo_m(target_co, "stco") %>%
-    clean_SBO() %>%
-    summarise_if(is.numeric, sum, na.rm = T) %>%
-    mutate(cbsa_code = "99999",
-           GEO_TTL = name),
-  get_sbo_m(peers, area) %>%
-    clean_SBO()
-)
-
-SBO_summary <- SBO_merged %>%
-  do_SBO() %>%
+SBO_summary <- SBO_merged  %>%
+  left_join(demo__ba_worker, by = "cbsa_code") %>%
+  clean_SBO() %>%
+  do_SBO()%>%
   select(cbsa_code, GEO_TTL, contains("gap"), contains("traded"),everything())
+
+# customized ------------------
+# SBO_merged <- bind_rows(
+#   get_sbo_m(target_co, "stco") %>%
+#     clean_SBO() %>%
+#     summarise_if(is.numeric, sum, na.rm = T) %>%
+#     mutate(cbsa_code = "99999",
+#            GEO_TTL = name),
+#   get_sbo_m(peers, area) %>%
+#     clean_SBO()
+# )
+# 
+# SBO_summary <- SBO_merged %>%
+#   do_SBO() %>%
+#   select(cbsa_code, GEO_TTL, contains("gap"), contains("traded"),everything())
 
 write.csv(SBO_summary, paste0(name, "_SBO.csv"))
 
