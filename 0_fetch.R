@@ -123,6 +123,12 @@ data <- jsonlite::read_json("https://www.sbir.gov/api/awards.json?year=2018")
 library("httr")
 library("readxl")
 GET("https://query.data.world/s/h2fs7kwriotwuljmdf254hhll6nw6p", write_disk(tf <- tempfile(fileext = ".xlsx")))
-SBIR <- read_excel(tf)
+SBIR <- read_excel(tf)%>% 
+  # clean year 
+  mutate(year = `Award Year`%>%as.numeric() %>% as_date(origin = "1900-01-01")%>% year())%>%
+  mutate(year = case_when(
+    grepl("January",`Award Year`) ~ as.numeric(str_sub(`Award Year`,-4,-1)),
+    T ~ year
+  )) 
 
 save(SBIR, file = "data/SBIR.rda")
