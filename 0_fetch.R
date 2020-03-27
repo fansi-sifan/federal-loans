@@ -116,4 +116,13 @@ save(EXIM, file = "data/EXIM.rda")
 
 # SBIR from API ============
 
-# data <- jsonlite::read_json("https://www.sbir.gov/api/awards.json?year=2019")
+data <- jsonlite::read_json("https://www.sbir.gov/api/awards.json?year=2018")
+
+# SBIR ========================
+
+library("httr")
+library("readxl")
+GET("https://query.data.world/s/h2fs7kwriotwuljmdf254hhll6nw6p", write_disk(tf <- tempfile(fileext = ".xlsx")))
+SBIR <- read_excel(tf)
+
+save(SBIR, file = "data/SBIR.rda")
